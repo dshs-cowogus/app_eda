@@ -196,12 +196,19 @@ class Logout:
         st.success("로그아웃 되었습니다.")
         time.sleep(1)
         st.rerun()
-
-# ---------------------
-# EDA 페이지 클래스
-# ---------------------
+REGION_MAP = {
+    "서울": "Seoul","부산":"Busan","대구":"Daegu","인천":"Incheon","광주":"Gwangju","대전":"Daejeon",
+    "울산":"Ulsan","세종":"Sejong","경기":"Gyeonggi","강원":"Gangwon","충북":"Chungbuk","충남":"Chungnam",
+    "전북":"Jeonbuk","전남":"Jeonnam","경북":"Gyeongbuk","경남":"Gyeongnam","제주":"Jeju"
+}
 class EDA:
     def __init__(self):
+     top_tabs = st.tabs(["Bike‑Sharing", "Population‑Trends"])
+        with top_tabs[0]: self._bike_eda()
+        with top_tabs[1]: self._pop_eda()
+
+    # -------------------------------- Bike -----------------------------------
+    def _bike_eda(self):
         st.title("📊 Bike Sharing Demand EDA")
         uploaded = st.file_uploader("데이터셋 업로드 (train.csv)", type="csv")
         if not uploaded:
@@ -448,174 +455,62 @@ class EDA:
                 > - 오른쪽: 로그 변환 후 분포는 훨씬 균형잡힌 형태로, 중앙값 부근에 데이터가 집중됩니다.  
                 > - 극단치의 영향이 완화되어 이후 분석·모델링 안정성이 높아집니다.
                 """)
-        # ------------------------------------------------------------------
-    #  Population-Trends EDA  ─  population_trends.csv 전용
-    # ------------------------------------------------------------------
-    def _population_trends_eda(self) -> None:
-        """
-        Streamlit 탭 구조
-        ├ Basic-Stats      : df.info(), df.describe()
-        ├ Year-Trend       : 전국 인구 추이 + 2035 프로젝션
-        ├ Regional-Rank    : 최근 5년 절대증감 / 변화율 (수평 bar 2개)
-        ├ Change-Top100    : 연도별 증감 Top-100 (컬러바 테이블)
-        └ Area-Chart       : 연도×지역 피벗 → 누적 영역그래프
-        """
-        uploaded = st.file_uploader(
-            "Upload population_trends.csv", type="csv", key="pop_csv"
-        )
-        if uploaded is None:                         # 파일 없으면 안내 후 종료
-            st.info("population_trends.csv 파일을 업로드 해주세요.")
-            return
-
-        # ───────────────────────────────── 전처리 ─────────────────────────────────
-        df = pd.read_csv(uploaded)
-
-        num_cols = ["인구", "출생아수(명)", "사망자수(명)"]
-        # '세종' 행의 결측 기호('-') → 0
-        df.loc[df["지역"] == "세종", num_cols] = (
-            df.loc[df["지역"] == "세종", num_cols].replace("-", 0)
-        )
-        # 콤마 제거, 문자열→정수
+    def _pop_eda(self):
+        up = st.file_uploader("population_trends.csv", type="csv", key="pop")
+        if up is None: st.info("population_trends.csv 업로드"); return
+        df = pd.read_csv(up)
+        num_cols=["인구","출생아수(명)","사망자수(명)"]
+        df.loc[df["지역"]=="세종",num_cols]=df.loc[df["지역"]=="세종",num_cols].replace("-",0)
         for c in num_cols:
-            df[c] = (
-                df[c]
-                .astype(str)
-                .str.replace(",", "", regex=False)
-                .str.replace("-", "0", regex=False)
-                .astype(int)
-            )
+            df[c]=df[c].astype(str).str.replace(",","",regex=False).str.replace("-","0").astype(int)
+        tabs=st.tabs(["기초 통계","연도별 추이","지역별 분석","변화량 분석","시각화"])
 
-        # ──────────────────────────────── 탭 구성 ────────────────────────────────
-        tabs = st.tabs(
-            ["Basic-Stats", "Year-Trend", "Regional-Rank",
-             "Change-Top100", "Area-Chart"]
-        )
-
-        # 1 Basic-Stats ────────────────────────────────────────────────────────
+        # 기초 통계
         with tabs[0]:
-            st.subheader("DataFrame Info")
-            buf = io.StringIO()
-            df.info(buf=buf)
-            st.text(buf.getvalue())
+            buf=io.StringIO(); df.info(buf=buf); st.text(buf.getvalue()); st.dataframe(df.describe())
 
-            st.subheader("Summary Statistics")
-            st.dataframe(df.describe(), use_container_width=True)
-
-        # 2 Year-Trend ─────────────────────────────────────────────────────────
+        # 연도별 추이 + 2035 예측
         with tabs[1]:
-            st.subheader("Nation-wide Population Trend")
-            nation = df[df["지역"] == "전국"].sort_values("연도")
+            nat=df[df["지역"]=="전국"].sort_values("연도")
+            fig,_=plt.subplots(); sns.lineplot(data=nat,x="연도",y="인구",marker="o",ax=_)
+            latest=nat["연도"].max(); recent=nat[nat["연도"]>=latest-2]
+            avg=(recent["출생아수(명)"]-recent["사망자수(명)"]).mean()
+            yrs=list(range(latest+1,2036)); pred=[nat.iloc[-1]["인구"]]
+            for _ in yrs: pred.append(pred[-1]+avg); pred.pop(0)
+            _.plot(yrs,pred,ls="--",marker="x",label="Projected"); _.legend()
+            _.set(title="Total Population",xlabel="Year",ylabel="Population"); st.pyplot(fig)
 
-            fig, ax = plt.subplots()
-            sns.lineplot(data=nation, x="연도", y="인구",
-                         marker="o", ax=ax, linewidth=2)
-            ax.set(title="Total Population", xlabel="Year", ylabel="Population")
-
-            # ─ 2035 예측: 최근 3년 (출생-사망) 평균을 선형 가산 ─
-            latest = nation["연도"].max()
-            recent = nation[nation["연도"] >= latest - 2].copy()
-            recent["net"] = recent["출생아수(명)"] - recent["사망자수(명)"]
-            avg_net = recent["net"].mean()
-
-            future_years = list(range(latest + 1, 2036))
-            future_pop = [nation.iloc[-1]["인구"]]
-            for _ in future_years:
-                future_pop.append(future_pop[-1] + avg_net)
-            future_pop.pop(0)                         # 시드 제거
-
-            ax.plot(future_years, future_pop,
-                    ls="--", marker="x", label="Projected")
-            ax.legend()
-            st.pyplot(fig)
-            st.markdown(
-                f"**Avg net change (last 3 yrs)** ≈ {avg_net:,.0f} / yr  → "
-                "dashed line shows projection to 2035."
-            )
-
-        # 3 Regional-Rank ──────────────────────────────────────────────────────
+        # 지역별 최근5년 증감
         with tabs[2]:
-            st.subheader("Δ Population by Region (Last 5 Years)")
-            yr_max = df["연도"].max()
-            comp = (
-                df[df["연도"].isin([yr_max, yr_max - 5])]
-                .pivot(index="지역", columns="연도", values="인구")
-                .rename(columns={yr_max: "now", yr_max - 5: "past"})
-                .drop(index="전국")
-                .dropna()
-            )
-            comp["Δ"] = comp["now"] - comp["past"]
-            comp["rate_%"] = comp["Δ"] / comp["past"] * 100
-            comp["Region"] = comp.index.map(REGION_MAP)
-            comp = comp.sort_values("Δ", ascending=False)
+            cur=df[df["연도"]==df["연도"].max()]; past=df[df["연도"]==df["연도"].max()-5]
+            comp=cur.merge(past, on="지역", suffixes=("_now","_past")); comp=comp[comp["지역"]!="전국"]
+            comp["Δ"]=comp["인구_now"]-comp["인구_past"]
+            comp["rate%"] = comp["Δ"] / comp["인구_past"]*100
+            comp["Region"] = comp["지역"].map(REGION_MAP); comp=comp.sort_values("Δ",ascending=False)
+            fig,ax=plt.subplots(figsize=(8,6)); sns.barplot(data=comp,x="Δ",y="Region",orient="h",ax=ax)
+            for i,v in enumerate(comp["Δ"]): ax.text(v,i,f"{v/1000:,.0f}k",va="center",ha="left")
+            ax.set(xlabel="Δ Pop (k)",ylabel=""); st.pyplot(fig)
+            fig2,ax2=plt.subplots(figsize=(8,6)); sns.barplot(data=comp,x="rate%",y="Region",orient="h",palette="viridis",ax=ax2)
+            for i,v in enumerate(comp["rate%"]): ax2.text(v,i,f"{v:.1f}%",va="center",ha="left")
+            ax2.set(xlabel="Rate (%)",ylabel=""); st.pyplot(fig2)
 
-            # ─ 절대 증가(감) ─
-            fig1, ax1 = plt.subplots(figsize=(8, 6))
-            sns.barplot(data=comp, x="Δ", y="Region", orient="h", ax=ax1)
-            for i, v in enumerate(comp["Δ"]):
-                ax1.text(v, i, f"{v/1000:,.0f}k", va="center", ha="left")
-            ax1.set(xlabel="Δ Population (k)", ylabel="")
-            st.pyplot(fig1)
-
-            # ─ 증가율 ─
-            fig2, ax2 = plt.subplots(figsize=(8, 6))
-            sns.barplot(data=comp, x="rate_%", y="Region",
-                        orient="h", palette="viridis", ax=ax2)
-            for i, v in enumerate(comp["rate_%"]):
-                ax2.text(v, i, f"{v:.1f}%", va="center", ha="left")
-            ax2.set(xlabel="Rate Change (%)", ylabel="")
-            st.pyplot(fig2)
-
-            st.markdown(
-                "- **Gyeonggi & Seoul** still lead absolute growth, "
-                "whereas several southern provinces contract.<br>"
-                "- 색상은 증감 크기에 따라 자동 스케일됩니다.",
-                unsafe_allow_html=True
-            )
-
-        # 4 Change-Top100 ──────────────────────────────────────────────────────
+        # 증감 Top100
         with tabs[3]:
-            st.subheader("Top-100 Year-on-Year Changes")
-            diff_df = (
-                df.sort_values(["지역", "연도"])
-                  .groupby("지역")
-                  .apply(lambda x: x.assign(diff=x["인구"].diff()))
-                  .reset_index(drop=True)
-                  .dropna(subset=["diff"])
-                  .loc[lambda d: d["지역"] != "전국"]
-            )
-            top100 = diff_df.loc[diff_df["diff"].abs().nlargest(100).index]
-            top100["Region"] = top100["지역"].map(REGION_MAP)
+            diff=df.sort_values(["지역","연도"]).groupby("지역").apply(lambda x:x.assign(diff=x["인구"].diff())).reset_index(drop=True)
+            diff=diff[(diff["지역"]!="전국") & diff["diff"].notna()]
+            top=diff.loc[diff["diff"].abs().nlargest(100).index]
+            top["Region"]=top["지역"].map(REGION_MAP)
+            st.dataframe(
+                top[["연도","Region","인구","diff"]]
+                .style.format({"인구":"{:,}","diff":"{:,}"})
+                .background_gradient(subset=["diff"], cmap="RdBu", vmin=-top["diff"].abs().max(), vmax=top["diff"].abs().max()),
+                height=600, use_container_width=True)
 
-            styled = (
-                top100[["연도", "Region", "인구", "diff"]]
-                .style.format({"인구": "{:,}", "diff": "{:,}"})
-                .background_gradient(
-                    subset=["diff"], cmap="RdBu",
-                    vmin=-top100["diff"].abs().max(),
-                    vmax= top100["diff"].abs().max())
-            )
-            st.dataframe(styled, use_container_width=True, height=600)
-
-        # 5 Stacked Area Chart ────────────────────────────────────────────────
+        # 누적 영역
         with tabs[4]:
-            st.subheader("Regional Composition (Area Chart)")
-            pivot = (
-                df.pivot(index="연도", columns="지역", values="인구")
-                  .drop(columns="전국")
-                  .rename(columns=REGION_MAP) / 1000  # 단위: 천명
-            )
-            fig, ax = plt.subplots(figsize=(10, 6))
-            pivot.plot.area(ax=ax, cmap="tab20")
-            ax.set(
-                xlabel="Year",
-                ylabel="Population (k)",
-                title="Stacked Area – Population by Region"
-            )
-            ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
-            st.pyplot(fig)
-
-    
-
+            pvt=df.pivot(index="연도",columns="지역",values="인구").drop(columns="전국").rename(columns=REGION_MAP)/1000
+            fig,ax=plt.subplots(figsize=(10,6)); pvt.plot.area(ax=ax,cmap="tab20"); ax.set(xlabel="Year",ylabel="Population (k)")
+            ax.legend(bbox_to_anchor=(1,1)); st.pyplot(fig)   st.title("📊 Exploratory Data Analysis")
 # ---------------------
 # 페이지 객체 생성
 # ---------------------
